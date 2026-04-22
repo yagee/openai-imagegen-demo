@@ -2,7 +2,7 @@ export type AspectRatioOption = "16:9" | "9:16" | "1:1" | null;
 export type ImageQualityOption = "low" | "medium" | "high" | "auto";
 
 export interface ChatImage {
-  fileName: string;
+  fileName?: string;
   mimeType: string;
   url: string;
 }
@@ -23,7 +23,7 @@ export interface ChatRecord {
   title: string;
   createdAt: string;
   updatedAt: string;
-  latestResponseId: string | null;
+  latestResponseId?: string | null;
   messages: ChatMessage[];
 }
 

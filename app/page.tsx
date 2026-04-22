@@ -3,22 +3,22 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ImagePlus, LoaderCircle, MessageSquarePlus, PencilLine, Ratio } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { OPENAI_IMAGE_QUALITY, OPENAI_IMAGE_QUALITY_OPTIONS } from "@/lib/constants";
 import {
-  OPENAI_IMAGE_QUALITY,
-  OPENAI_IMAGE_QUALITY_OPTIONS,
-} from "@/lib/constants";
+  getStoredChat,
+  listStoredChats,
+  putStoredChat,
+} from "@/lib/browser/chat-storage";
 import { cn } from "@/lib/utils";
 import type {
   AspectRatioOption,
+  ChatMessage,
   ChatRecord,
   ChatSummary,
   ImageQualityOption,
 } from "@/types/chat";
 
-const ASPECT_RATIO_OPTIONS: Array<{
-  label: string;
-  value: AspectRatioOption;
-}> = [
+const ASPECT_RATIO_OPTIONS: Array<{ label: string; value: AspectRatioOption }> = [
   { label: "Not set", value: null },
   { label: "16:9", value: "16:9" },
   { label: "9:16", value: "9:16" },
@@ -31,6 +31,17 @@ const QUALITY_LABELS: Record<ImageQualityOption, string> = {
   high: "High",
   auto: "Auto",
 };
+
+function createEmptyChat(title = "New chat"): ChatRecord {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    title,
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+  };
+}
 
 async function readJson<T>(response: Response) {
   const payload = (await response.json()) as T;
@@ -47,6 +58,17 @@ function formatTime(value: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function getChatSummariesFromChat(chat: ChatRecord): ChatSummary {
+  return {
+    id: chat.id,
+    title: chat.title,
+    createdAt: chat.createdAt,
+    updatedAt: chat.updatedAt,
+    messageCount: chat.messages.length,
+    preview: chat.messages.findLast((message) => message.role === "user")?.prompt ?? null,
+  };
 }
 
 export default function HomePage() {
@@ -71,49 +93,26 @@ export default function HomePage() {
 
     const bootstrap = async () => {
       try {
-        const chatsPayload = await readJson<{ chats: ChatSummary[] }>(
-          await fetch("/api/chats", { cache: "no-store" }),
-        );
-        const chats = chatsPayload.chats;
-
+        const summaries = await listStoredChats();
         if (!isMounted) return;
 
-        setChatSummaries(chats);
-
-        if (!chats.length) {
-          const created = await readJson<{ chat: ChatRecord }>(
-            await fetch("/api/chats", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ title: "New chat" }),
-            }),
-          );
-
+        if (!summaries.length) {
+          const chat = createEmptyChat();
+          await putStoredChat(chat);
           if (!isMounted) return;
 
-          setActiveChat(created.chat);
-          setTitleDraft(created.chat.title);
-          setChatSummaries([
-            {
-              id: created.chat.id,
-              title: created.chat.title,
-              createdAt: created.chat.createdAt,
-              updatedAt: created.chat.updatedAt,
-              messageCount: 0,
-              preview: null,
-            },
-          ]);
+          setActiveChat(chat);
+          setTitleDraft(chat.title);
+          setChatSummaries([getChatSummariesFromChat(chat)]);
           return;
         }
 
-        const firstChat = await readJson<{ chat: ChatRecord }>(
-          await fetch(`/api/chats/${chats[0].id}`, { cache: "no-store" }),
-        );
-
+        const firstChat = await getStoredChat(summaries[0].id);
         if (!isMounted) return;
 
-        setActiveChat(firstChat.chat);
-        setTitleDraft(firstChat.chat.title);
+        setChatSummaries(summaries);
+        setActiveChat(firstChat);
+        setTitleDraft(firstChat?.title ?? "");
       } catch (caughtError) {
         if (!isMounted) return;
         setError(
@@ -134,10 +133,8 @@ export default function HomePage() {
   }, []);
 
   const refreshSummaries = async (preferredChat?: ChatRecord) => {
-    const chatsPayload = await readJson<{ chats: ChatSummary[] }>(
-      await fetch("/api/chats", { cache: "no-store" }),
-    );
-    setChatSummaries(chatsPayload.chats);
+    const summaries = await listStoredChats();
+    setChatSummaries(summaries);
     if (preferredChat) {
       setTitleDraft(preferredChat.title);
     }
@@ -146,11 +143,12 @@ export default function HomePage() {
   const loadChat = async (chatId: string) => {
     setError("");
     try {
-      const payload = await readJson<{ chat: ChatRecord }>(
-        await fetch(`/api/chats/${chatId}`, { cache: "no-store" }),
-      );
-      setActiveChat(payload.chat);
-      setTitleDraft(payload.chat.title);
+      const chat = await getStoredChat(chatId);
+      if (!chat) {
+        throw new Error("Chat not found.");
+      }
+      setActiveChat(chat);
+      setTitleDraft(chat.title);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Failed to load chat.");
     }
@@ -159,17 +157,11 @@ export default function HomePage() {
   const createNewChat = async () => {
     setError("");
     try {
-      const payload = await readJson<{ chat: ChatRecord }>(
-        await fetch("/api/chats", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: "New chat" }),
-        }),
-      );
-
-      setActiveChat(payload.chat);
-      setTitleDraft(payload.chat.title);
-      await refreshSummaries(payload.chat);
+      const chat = createEmptyChat();
+      await putStoredChat(chat);
+      setActiveChat(chat);
+      setTitleDraft(chat.title);
+      await refreshSummaries(chat);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Failed to create chat.");
     }
@@ -182,16 +174,14 @@ export default function HomePage() {
     setError("");
 
     try {
-      const payload = await readJson<{ chat: ChatRecord }>(
-        await fetch(`/api/chats/${activeChat.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: titleDraft }),
-        }),
-      );
-
-      setActiveChat(payload.chat);
-      await refreshSummaries(payload.chat);
+      const updatedChat: ChatRecord = {
+        ...activeChat,
+        title: titleDraft.trim() || "New chat",
+        updatedAt: new Date().toISOString(),
+      };
+      await putStoredChat(updatedChat);
+      setActiveChat(updatedChat);
+      await refreshSummaries(updatedChat);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Rename failed.");
     } finally {
@@ -206,22 +196,69 @@ export default function HomePage() {
     setIsSending(true);
     setError("");
 
+    const previousImageDataUrl =
+      [...activeChat.messages]
+        .reverse()
+        .find((message) => message.role === "assistant" && message.image)?.image?.url ?? null;
+
     try {
-      const payload = await readJson<{ chat: ChatRecord }>(
-        await fetch(`/api/chats/${activeChat.id}/messages`, {
+      const payload = await readJson<{
+        imageDataUrl: string;
+        revisedPrompt: string;
+      }>(
+        await fetch("/api/images/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt: draftPrompt,
             aspectRatio,
             quality,
+            previousImageDataUrl,
           }),
         }),
       );
 
-      setActiveChat(payload.chat);
+      const now = new Date().toISOString();
+      const userMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "user",
+        prompt: draftPrompt,
+        createdAt: now,
+        aspectRatio,
+        quality,
+        image: null,
+        responseId: null,
+      };
+
+      const assistantMessage: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        prompt: payload.revisedPrompt,
+        createdAt: now,
+        aspectRatio,
+        quality,
+        image: {
+          mimeType: payload.imageDataUrl.match(/^data:(.*?);base64,/)?.[1] ?? "image/png",
+          url: payload.imageDataUrl,
+        },
+        responseId: null,
+      };
+
+      const nextTitle =
+        activeChat.title === "New chat" ? draftPrompt.trim().slice(0, 48) || "New chat" : activeChat.title;
+
+      const updatedChat: ChatRecord = {
+        ...activeChat,
+        title: nextTitle,
+        updatedAt: now,
+        messages: [...activeChat.messages, userMessage, assistantMessage],
+      };
+
+      await putStoredChat(updatedChat);
+      setActiveChat(updatedChat);
+      setTitleDraft(updatedChat.title);
       setDraftPrompt("");
-      await refreshSummaries(payload.chat);
+      await refreshSummaries(updatedChat);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Generation failed.");
     } finally {
@@ -238,7 +275,7 @@ export default function HomePage() {
             <div className="mt-3 flex items-center justify-between gap-3">
               <div>
                 <h1 className="font-mono text-2xl">Studio</h1>
-                <p className="mt-1 text-sm text-white/70">Saved in `data/chats`.</p>
+                <p className="mt-1 text-sm text-white/70">Saved in browser storage.</p>
               </div>
               <Button
                 type="button"
@@ -295,7 +332,7 @@ export default function HomePage() {
                   {activeChat?.title ?? "Loading"}
                 </h2>
                 <p className="mt-2 text-sm text-slate-600">
-                  Multi-turn image generation. Next prompt can keep working from previous image.
+                  Chat history survives container restart because it lives in browser IndexedDB.
                 </p>
               </div>
 
@@ -355,8 +392,8 @@ export default function HomePage() {
                         {message.prompt}
                       </p>
 
-                      {message.aspectRatio ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {message.aspectRatio ? (
                           <div
                             className={cn(
                               "inline-flex rounded-full px-3 py-1 text-xs",
@@ -367,21 +404,10 @@ export default function HomePage() {
                           >
                             Ratio {message.aspectRatio}
                           </div>
-                          <div
-                            className={cn(
-                              "inline-flex rounded-full px-3 py-1 text-xs",
-                              message.role === "user"
-                                ? "bg-white/12 text-white/80"
-                                : "bg-slate-900/80 text-white",
-                            )}
-                          >
-                            Quality {QUALITY_LABELS[messageQuality]}
-                          </div>
-                        </div>
-                      ) : (
+                        ) : null}
                         <div
                           className={cn(
-                            "mt-3 inline-flex rounded-full px-3 py-1 text-xs",
+                            "inline-flex rounded-full px-3 py-1 text-xs",
                             message.role === "user"
                               ? "bg-white/12 text-white/80"
                               : "bg-slate-900/80 text-white",
@@ -389,7 +415,7 @@ export default function HomePage() {
                         >
                           Quality {QUALITY_LABELS[messageQuality]}
                         </div>
-                      )}
+                      </div>
 
                       {message.image ? (
                         <div className="mt-4 overflow-hidden rounded-[24px] border border-black/10 bg-white">
@@ -424,7 +450,7 @@ export default function HomePage() {
                   </div>
                   <h3 className="mt-5 font-mono text-2xl text-slate-900">Start first render</h3>
                   <p className="mt-3 text-sm leading-6 text-slate-600">
-                    Type prompt, pick optional ratio, generate image. Chat keeps history and saved files.
+                    Type prompt, pick optional ratio and quality, generate image. History lives in browser.
                   </p>
                 </div>
               </div>
@@ -513,8 +539,7 @@ export default function HomePage() {
 
                 <div className="flex flex-col gap-3 border-t border-slate-200 pt-3 md:flex-row md:items-center md:justify-between">
                   <p className="text-sm text-slate-500">
-                    Images + chat JSON saved per conversation in{" "}
-                    <code>data/chats/&lt;chat-id&gt;</code>.
+                    Chats and generated images stored in this browser.
                   </p>
                   <Button
                     type="submit"
