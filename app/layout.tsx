@@ -1,22 +1,23 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { IBM_Plex_Mono, Space_Grotesk } from "next/font/google";
 import { APP_NAME } from "@/lib/constants";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const headingFont = Space_Grotesk({
+  variable: "--font-heading",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const monoFont = IBM_Plex_Mono({
+  variable: "--font-mono-ui",
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
 });
 
 export const metadata: Metadata = {
   title: APP_NAME,
   description:
-    "Capture or upload a photo, apply multiple imagegen styles, and stream results in real time.",
+    "Chat-based image generation workspace with saved conversations and reusable history.",
   icons: {
     icon: "/icon.png",
   },
@@ -30,7 +31,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased h-full bg-background text-foreground`}
+        className={`${headingFont.variable} ${monoFont.variable} h-full bg-background text-foreground antialiased`}
       >
         {children}
       </body>

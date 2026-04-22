@@ -119,6 +119,13 @@
     @apply border-border outline-ring/50;
   }
   body {
+    font-family: var(--font-heading), sans-serif;
     @apply bg-background text-foreground;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: var(--font-mono-ui), monospace;
   }
 }

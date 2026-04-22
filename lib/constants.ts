@@ -1,6 +1,6 @@
 import type { PhotoboothStyleId } from "@/lib/photobooth-styles";
 
-export const APP_NAME = "Photobooth ImageGen Demo";
+export const APP_NAME = "Image Generation Chat Demo";
 
 export const PHOTOBOOTH_SESSION_STORAGE_KEY = "photobooth.request";
 
