@@ -1,9 +1,18 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
-import { appendMessages, readChat, saveChatImage } from "@/lib/chat-store";
 import {
+  appendMessages,
+  getChatImagePath,
+  readChat,
+  saveChatImage,
+} from "@/lib/chat-store";
+import {
+  OPENAI_IMAGE_MODEL,
+  OPENAI_IMAGE_OUTPUT_FORMAT,
   OPENAI_IMAGE_QUALITY,
   OPENAI_IMAGE_QUALITY_OPTIONS,
+  OPENAI_IMAGE_SIZE,
 } from "@/lib/constants";
 import type {
   AspectRatioOption,
@@ -23,22 +32,6 @@ type RequestPayload = {
   prompt?: unknown;
   aspectRatio?: unknown;
   quality?: unknown;
-};
-
-type ResponseImageOutput = {
-  type: "image_generation_call";
-  result: string;
-  output_format?: string;
-};
-
-type ResponseTextContent = {
-  type: "output_text";
-  text: string;
-};
-
-type ResponseMessageOutput = {
-  type: "message";
-  content: ResponseTextContent[];
 };
 
 function normalizeAspectRatio(value: unknown): AspectRatioOption {
@@ -65,51 +58,45 @@ function getMimeType(outputFormat: unknown) {
   return "image/png";
 }
 
-function isImageOutput(item: unknown): item is ResponseImageOutput {
-  return (
-    typeof item === "object" &&
-    item !== null &&
-    "type" in item &&
-    item.type === "image_generation_call" &&
-    "result" in item &&
-    typeof item.result === "string" &&
-    Boolean(item.result)
-  );
+function getOutputSize(aspectRatio: AspectRatioOption) {
+  if (aspectRatio === "16:9") return "1536x1024";
+  if (aspectRatio === "1:1") return "1024x1024";
+  if (aspectRatio === "9:16") return "1024x1536";
+  return OPENAI_IMAGE_SIZE;
 }
 
-function isMessageOutput(item: unknown): item is ResponseMessageOutput {
-  return (
-    typeof item === "object" &&
-    item !== null &&
-    "type" in item &&
-    item.type === "message" &&
-    "content" in item &&
-    Array.isArray(item.content)
-  );
+async function getLatestAssistantImageDataUrl(chat: Awaited<ReturnType<typeof readChat>>) {
+  const latestImageMessage = [...chat.messages]
+    .reverse()
+    .find((message) => message.role === "assistant" && message.image);
+
+  if (!latestImageMessage?.image) return null;
+
+  const filePath = getChatImagePath(chat.id, latestImageMessage.image.fileName);
+  const bytes = await readFile(filePath);
+  const base64 = bytes.toString("base64");
+  return `data:${latestImageMessage.image.mimeType};base64,${base64}`;
 }
 
-function getImageResult(output: unknown[]) {
-  return output.find(isImageOutput);
-}
+type ImageApiPayload = {
+  data?: Array<{
+    b64_json?: string;
+    output_format?: string;
+    revised_prompt?: string;
+  }>;
+};
 
-function getTextResult(output: unknown[]) {
-  return output
-    .filter(isMessageOutput)
-    .flatMap((item) =>
-      item.content
-        .filter(
-          (content): content is ResponseTextContent =>
-            typeof content === "object" &&
-            content !== null &&
-            "type" in content &&
-            content.type === "output_text" &&
-            "text" in content &&
-            typeof content.text === "string",
-        )
-        .map((content) => content.text),
-    )
-    .join("\n")
-    .trim();
+async function readImageApiError(response: Response) {
+  let message = `OpenAI request failed (${response.status}).`;
+  try {
+    const errorPayload = (await response.json()) as { error?: { message?: string } };
+    if (typeof errorPayload.error?.message === "string" && errorPayload.error.message) {
+      message = errorPayload.error.message;
+    }
+  } catch {
+    // Keep generic message.
+  }
+  return message;
 }
 
 export async function POST(request: Request, context: RouteContext) {
@@ -155,8 +142,9 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const endpointBase = process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1";
-  const endpoint = `${endpointBase.replace(/\/$/, "")}/responses`;
   const effectivePrompt = buildEffectivePrompt(prompt, aspectRatio);
+  const size = getOutputSize(aspectRatio);
+  const latestImageDataUrl = await getLatestAssistantImageDataUrl(chat);
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
@@ -173,49 +161,44 @@ export async function POST(request: Request, context: RouteContext) {
     headers["OpenAI-Project"] = project;
   }
 
+  const endpoint = latestImageDataUrl
+    ? `${endpointBase.replace(/\/$/, "")}/images/edits`
+    : `${endpointBase.replace(/\/$/, "")}/images/generations`;
+
   const response = await fetch(endpoint, {
     method: "POST",
     headers,
     body: JSON.stringify({
-      model: "gpt-5.4",
-      input: effectivePrompt,
-      previous_response_id: chat.latestResponseId ?? undefined,
-      tools: [{ type: "image_generation", action: "auto", quality }],
+      model: OPENAI_IMAGE_MODEL,
+      prompt: effectivePrompt,
+      quality,
+      size,
+      output_format: OPENAI_IMAGE_OUTPUT_FORMAT,
+      ...(latestImageDataUrl
+        ? {
+            images: [{ image_url: latestImageDataUrl }],
+          }
+        : {}),
     }),
   });
 
   if (!response.ok) {
-    let message = `OpenAI request failed (${response.status}).`;
-    try {
-      const errorPayload = (await response.json()) as { error?: { message?: string } };
-      if (typeof errorPayload.error?.message === "string" && errorPayload.error.message) {
-        message = errorPayload.error.message;
-      }
-    } catch {
-      // Keep generic message.
-    }
-
+    const message = await readImageApiError(response);
     return NextResponse.json({ error: { message } }, { status: response.status });
   }
 
-  const responsePayload = (await response.json()) as {
-    id?: string;
-    output?: unknown[];
-  };
+  const responsePayload = (await response.json()) as ImageApiPayload;
+  const imageResult = responsePayload.data?.[0];
 
-  const output = Array.isArray(responsePayload.output) ? responsePayload.output : [];
-  const imageResult = getImageResult(output);
-  const assistantText = getTextResult(output);
-
-  if (!imageResult) {
+  if (!imageResult?.b64_json) {
     return NextResponse.json(
       { error: { message: "Model returned no image." } },
       { status: 502 },
     );
   }
 
-  const mimeType = getMimeType(imageResult.output_format);
-  const savedImage = await saveChatImage(chatId, mimeType, imageResult.result);
+  const mimeType = getMimeType(imageResult.output_format ?? OPENAI_IMAGE_OUTPUT_FORMAT);
+  const savedImage = await saveChatImage(chatId, mimeType, imageResult.b64_json);
   const now = new Date().toISOString();
 
   const userMessage: ChatMessage = {
@@ -232,7 +215,7 @@ export async function POST(request: Request, context: RouteContext) {
   const assistantMessage: ChatMessage = {
     id: randomUUID(),
     role: "assistant",
-    prompt: assistantText || "Generated image.",
+    prompt: imageResult.revised_prompt?.trim() || "Generated image.",
     createdAt: now,
     aspectRatio,
     quality,
@@ -241,10 +224,14 @@ export async function POST(request: Request, context: RouteContext) {
       mimeType,
       url: savedImage.url,
     },
-    responseId: typeof responsePayload.id === "string" ? responsePayload.id : null,
+    responseId: null,
   };
 
-  const updatedChat = await appendMessages(chatId, [userMessage, assistantMessage], assistantMessage.responseId);
+  const updatedChat = await appendMessages(
+    chatId,
+    [userMessage, assistantMessage],
+    null,
+  );
 
   return NextResponse.json({
     chat: updatedChat,
