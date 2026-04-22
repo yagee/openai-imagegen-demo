@@ -70,7 +70,7 @@ async function getLatestAssistantImageDataUrl(chat: Awaited<ReturnType<typeof re
     .reverse()
     .find((message) => message.role === "assistant" && message.image);
 
-  if (!latestImageMessage?.image) return null;
+  if (!latestImageMessage?.image?.fileName) return null;
 
   const filePath = getChatImagePath(chat.id, latestImageMessage.image.fileName);
   const bytes = await readFile(filePath);
