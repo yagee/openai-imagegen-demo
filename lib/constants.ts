@@ -18,6 +18,12 @@ export const IMAGEGEN_API_ROUTE = "/api/photobooth";
 export const OPENAI_IMAGE_MODEL = "gpt-image-2";
 export const OPENAI_IMAGE_SIZE = "1024x1536";
 export const OPENAI_IMAGE_QUALITY = "low";
+export const OPENAI_IMAGE_QUALITY_OPTIONS = [
+  "low",
+  "medium",
+  "high",
+  "auto",
+] as const;
 export const OPENAI_IMAGE_OUTPUT_FORMAT = "png";
 export const OPENAI_IMAGE_PARTIAL_IMAGES = 0;
 

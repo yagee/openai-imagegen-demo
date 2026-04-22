@@ -1,4 +1,5 @@
 export type AspectRatioOption = "16:9" | "9:16" | "1:1" | null;
+export type ImageQualityOption = "low" | "medium" | "high" | "auto";
 
 export interface ChatImage {
   fileName: string;
@@ -12,6 +13,7 @@ export interface ChatMessage {
   prompt: string;
   createdAt: string;
   aspectRatio: AspectRatioOption;
+  quality: ImageQualityOption;
   image: ChatImage | null;
   responseId: string | null;
 }

@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { appendMessages, readChat, saveChatImage } from "@/lib/chat-store";
-import type { AspectRatioOption, ChatMessage } from "@/types/chat";
+import {
+  OPENAI_IMAGE_QUALITY,
+  OPENAI_IMAGE_QUALITY_OPTIONS,
+} from "@/lib/constants";
+import type {
+  AspectRatioOption,
+  ChatMessage,
+  ImageQualityOption,
+} from "@/types/chat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +22,7 @@ type RouteContext = {
 type RequestPayload = {
   prompt?: unknown;
   aspectRatio?: unknown;
+  quality?: unknown;
 };
 
 type ResponseImageOutput = {
@@ -34,6 +43,13 @@ type ResponseMessageOutput = {
 
 function normalizeAspectRatio(value: unknown): AspectRatioOption {
   return value === "16:9" || value === "9:16" || value === "1:1" ? value : null;
+}
+
+function normalizeQuality(value: unknown): ImageQualityOption {
+  return typeof value === "string" &&
+    OPENAI_IMAGE_QUALITY_OPTIONS.includes(value as ImageQualityOption)
+    ? (value as ImageQualityOption)
+    : OPENAI_IMAGE_QUALITY;
 }
 
 function buildEffectivePrompt(prompt: string, aspectRatio: AspectRatioOption) {
@@ -119,6 +135,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
   const aspectRatio = normalizeAspectRatio(payload.aspectRatio);
+  const quality = normalizeQuality(payload.quality);
 
   if (!prompt) {
     return NextResponse.json(
@@ -163,7 +180,7 @@ export async function POST(request: Request, context: RouteContext) {
       model: "gpt-5.4",
       input: effectivePrompt,
       previous_response_id: chat.latestResponseId ?? undefined,
-      tools: [{ type: "image_generation", action: "auto" }],
+      tools: [{ type: "image_generation", action: "auto", quality }],
     }),
   });
 
@@ -207,6 +224,7 @@ export async function POST(request: Request, context: RouteContext) {
     prompt,
     createdAt: now,
     aspectRatio,
+    quality,
     image: null,
     responseId: null,
   };
@@ -217,6 +235,7 @@ export async function POST(request: Request, context: RouteContext) {
     prompt: assistantText || "Generated image.",
     createdAt: now,
     aspectRatio,
+    quality,
     image: {
       fileName: savedImage.fileName,
       mimeType,

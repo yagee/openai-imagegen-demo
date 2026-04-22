@@ -3,8 +3,17 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ImagePlus, LoaderCircle, MessageSquarePlus, PencilLine, Ratio } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  OPENAI_IMAGE_QUALITY,
+  OPENAI_IMAGE_QUALITY_OPTIONS,
+} from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import type { AspectRatioOption, ChatRecord, ChatSummary } from "@/types/chat";
+import type {
+  AspectRatioOption,
+  ChatRecord,
+  ChatSummary,
+  ImageQualityOption,
+} from "@/types/chat";
 
 const ASPECT_RATIO_OPTIONS: Array<{
   label: string;
@@ -15,6 +24,13 @@ const ASPECT_RATIO_OPTIONS: Array<{
   { label: "9:16", value: "9:16" },
   { label: "1:1", value: "1:1" },
 ];
+
+const QUALITY_LABELS: Record<ImageQualityOption, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  auto: "Auto",
+};
 
 async function readJson<T>(response: Response) {
   const payload = (await response.json()) as T;
@@ -38,6 +54,7 @@ export default function HomePage() {
   const [activeChat, setActiveChat] = useState<ChatRecord | null>(null);
   const [draftPrompt, setDraftPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatioOption>(null);
+  const [quality, setQuality] = useState<ImageQualityOption>(OPENAI_IMAGE_QUALITY);
   const [titleDraft, setTitleDraft] = useState("");
   const [isBooting, setIsBooting] = useState(true);
   const [isSending, setIsSending] = useState(false);
@@ -197,6 +214,7 @@ export default function HomePage() {
           body: JSON.stringify({
             prompt: draftPrompt,
             aspectRatio,
+            quality,
           }),
         }),
       );
@@ -313,52 +331,79 @@ export default function HomePage() {
               </div>
             ) : activeChat?.messages.length ? (
               <div className="space-y-5">
-                {activeChat.messages.map((message) => (
-                  <article
-                    key={message.id}
-                    className={cn(
-                      "max-w-3xl rounded-[28px] border p-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] md:p-5",
-                      message.role === "user"
-                        ? "ml-auto border-slate-900 bg-slate-900 text-white"
-                        : "border-[#e6ddd2] bg-[#fffaf4]",
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs uppercase tracking-[0.3em] opacity-60">
-                        {message.role === "user" ? "Prompt" : "Image"}
+                {activeChat.messages.map((message) => {
+                  const messageQuality = message.quality ?? OPENAI_IMAGE_QUALITY;
+
+                  return (
+                    <article
+                      key={message.id}
+                      className={cn(
+                        "max-w-3xl rounded-[28px] border p-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] md:p-5",
+                        message.role === "user"
+                          ? "ml-auto border-slate-900 bg-slate-900 text-white"
+                          : "border-[#e6ddd2] bg-[#fffaf4]",
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs uppercase tracking-[0.3em] opacity-60">
+                          {message.role === "user" ? "Prompt" : "Image"}
+                        </p>
+                        <p className="text-xs opacity-60">{formatTime(message.createdAt)}</p>
+                      </div>
+
+                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 md:text-[15px]">
+                        {message.prompt}
                       </p>
-                      <p className="text-xs opacity-60">{formatTime(message.createdAt)}</p>
-                    </div>
 
-                    <p className="mt-3 whitespace-pre-wrap text-sm leading-6 md:text-[15px]">
-                      {message.prompt}
-                    </p>
+                      {message.aspectRatio ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <div
+                            className={cn(
+                              "inline-flex rounded-full px-3 py-1 text-xs",
+                              message.role === "user"
+                                ? "bg-white/12 text-white/80"
+                                : "bg-slate-900 text-white",
+                            )}
+                          >
+                            Ratio {message.aspectRatio}
+                          </div>
+                          <div
+                            className={cn(
+                              "inline-flex rounded-full px-3 py-1 text-xs",
+                              message.role === "user"
+                                ? "bg-white/12 text-white/80"
+                                : "bg-slate-900/80 text-white",
+                            )}
+                          >
+                            Quality {QUALITY_LABELS[messageQuality]}
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          className={cn(
+                            "mt-3 inline-flex rounded-full px-3 py-1 text-xs",
+                            message.role === "user"
+                              ? "bg-white/12 text-white/80"
+                              : "bg-slate-900/80 text-white",
+                          )}
+                        >
+                          Quality {QUALITY_LABELS[messageQuality]}
+                        </div>
+                      )}
 
-                    {message.aspectRatio ? (
-                      <div
-                        className={cn(
-                          "mt-3 inline-flex rounded-full px-3 py-1 text-xs",
-                          message.role === "user"
-                            ? "bg-white/12 text-white/80"
-                            : "bg-slate-900 text-white",
-                        )}
-                      >
-                        Ratio {message.aspectRatio}
-                      </div>
-                    ) : null}
-
-                    {message.image ? (
-                      <div className="mt-4 overflow-hidden rounded-[24px] border border-black/10 bg-white">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={message.image.url}
-                          alt={message.prompt}
-                          className="block h-auto w-full object-cover"
-                        />
-                      </div>
-                    ) : null}
-                  </article>
-                ))}
+                      {message.image ? (
+                        <div className="mt-4 overflow-hidden rounded-[24px] border border-black/10 bg-white">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={message.image.url}
+                            alt={message.prompt}
+                            className="block h-auto w-full object-cover"
+                          />
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
 
                 {isSending ? (
                   <article className="max-w-3xl rounded-[28px] border border-[#e6ddd2] bg-[#fffaf4] p-5 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
@@ -415,11 +460,47 @@ export default function HomePage() {
                 })}
               </div>
 
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="mr-2 inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-xs uppercase tracking-[0.25em] text-slate-500">
+                  Quality
+                </div>
+
+                {OPENAI_IMAGE_QUALITY_OPTIONS.map((option) => {
+                  const isSelected = option === quality;
+
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setQuality(option)}
+                      className={cn(
+                        "rounded-full border px-4 py-2 text-sm transition",
+                        isSelected
+                          ? "border-[#b45309] bg-[#b45309] text-white"
+                          : "border-slate-300 bg-white text-slate-700 hover:border-slate-500",
+                      )}
+                    >
+                      {QUALITY_LABELS[option]}
+                    </button>
+                  );
+                })}
+              </div>
+
               {aspectRatio ? (
+                <div className="space-y-1 text-sm text-slate-500">
+                  <p>
+                    Prompt append: <span className="font-mono">Aspect ratio: {aspectRatio}.</span>
+                  </p>
+                  <p>
+                    Selected quality:{" "}
+                    <span className="font-mono">{QUALITY_LABELS[quality]}</span>
+                  </p>
+                </div>
+              ) : (
                 <p className="text-sm text-slate-500">
-                  Prompt append: <span className="font-mono">Aspect ratio: {aspectRatio}.</span>
+                  Selected quality: <span className="font-mono">{QUALITY_LABELS[quality]}</span>
                 </p>
-              ) : null}
+              )}
 
               <div className="rounded-[30px] border border-slate-300 bg-white p-3 shadow-[0_16px_50px_rgba(15,23,42,0.06)]">
                 <textarea
